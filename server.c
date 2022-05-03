@@ -8,9 +8,11 @@
 #include <stdlib.h>
 #include <string.h>
 #include <pthread.h>
+#include "cjson/cJSON.h"
+#include "cjson/cJSON.c"
 
 #define MAX_BUFF 500
-#define MESSAGE_LEN 100
+#define MESSAGE_LEN 1000
 #define MAX_CONN 5
 #define NAME_LEN 20
 
@@ -19,7 +21,7 @@ static _Atomic unsigned int num_conns;
 struct client_conn {
   struct sockaddr_in socket;
   char user[NAME_LEN];
-  char status[20];
+  int status;
   int fd;
 };
 
@@ -27,7 +29,7 @@ struct client_conn *conns[MAX_CONN];
 struct sockaddr_in server;
 struct sockaddr_in client;
 int fd, conn, port;
-char message[100] = "";
+char message[MESSAGE_LEN] = "";
 
 pthread_mutex_t client_mutex = PTHREAD_MUTEX_INITIALIZER;
 pthread_t tid;
@@ -36,13 +38,41 @@ pthread_t tid;
 void * handle_conn(void *arg) {
   char buff[MAX_BUFF];
   char username[NAME_LEN];
+  int leave_flag = 0;
   num_conns++;
   struct client_conn *client_connection = (struct client_conn*) arg;
-  while(recv(client_connection->fd, message, 100, 0)>0) {
-    printf("Message Received: %s\n", message);
-    message[0] = '\0';
+
+  if(recv(client_connection->fd, buff, MAX_BUFF, 0) > 0) {
+    cJSON *json = cJSON_Parse(buff);
+    cJSON *u_name = NULL;
+    cJSON *request = NULL;
+    cJSON_Delete(json);
   }
-  exit(0);
+
+  while(1) {
+    if(leave_flag) {
+      break;
+    }
+
+    int receive = recv(client_connection->fd, buff, MAX_BUFF, 0);
+
+    if(receive > 0) {
+      printf("Message Received: %s\n", buff);
+      bzero(buff, MAX_BUFF);
+    } else if (receive == 0) {
+      printf("Se desconecto\n");
+      leave_flag = 1;
+    } else {
+      printf("ERROR\n");
+    }
+  }
+
+  close(client_connection->fd);
+  //free(client_connection);
+  num_conns--;
+  pthread_detach(pthread_self());
+
+  return NULL;
 }
 
 int main(int argc, char *argv[]) {
@@ -81,6 +111,7 @@ int main(int argc, char *argv[]) {
     struct client_conn *client_connection;
     client_connection->socket = client;
     client_connection->fd = conn;
+    client_connection->status = 0;
 
     pthread_mutex_lock(&client_mutex);
     for (int i=0; i<MAX_CONN; i++) {
