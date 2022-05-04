@@ -9,18 +9,21 @@
 #include <string.h>
 #include <unistd.h>
 #include <time.h>
+#include <pthread.h>
 #include "cjson/cJSON.h"
 #include "cjson/cJSON.c"
 
 #define MAX_INPUT_SIZE 200
 #define MESSAGE_LEN 100
 #define NAME_LEN 20
+#define MAX_BUFF 500
 
 struct sockaddr_in server;
 int fd, conn, port;
 char message[MESSAGE_LEN] = "";
 char user[NAME_LEN];
 char server_ip[20];
+
 
 int stablish_connection() {
   fd = socket(AF_INET, SOCK_STREAM, 0);
@@ -31,7 +34,7 @@ int stablish_connection() {
 
   inet_pton(AF_INET, server_ip, &server.sin_addr);
 
-  connect(fd, (struct sockaddr*) &server, sizeof(server));
+  if(connect(fd, (struct sockaddr*) &server, sizeof(server)) < 0) return (-1);
 
   cJSON *json = cJSON_CreateObject();
   cJSON *body = cJSON_CreateObject();
@@ -42,7 +45,7 @@ int stablish_connection() {
 
   time(&rawtime);
   timeinfo = localtime(&rawtime);
-  sprintf(timestr, "%d:%d", timeinfo->tm_hour, timeinfo->tm_min);
+  sprintf(timestr, "%02d:%02d", timeinfo->tm_hour, timeinfo->tm_min);
 
   cJSON_AddStringToObject(body, "connect_time", timestr);
   cJSON_AddStringToObject(body, "user_id", user);
@@ -55,6 +58,9 @@ int stablish_connection() {
   send(fd, string, strlen(string), 0);
 
   cJSON_Delete(json);
+
+  char inbuff[MAX_BUFF];
+
   return (1);
 }
 
@@ -67,6 +73,9 @@ int send_disconnect() {
   send(fd, string, strlen(string), 0);
 
   cJSON_Delete(json);
+  char inbuff[MAX_BUFF];
+
+  
   return (1);
 }
 
@@ -80,7 +89,7 @@ int send_message(char *dest, char *msg) {
 
   time(&rawtime);
   timeinfo = localtime(&rawtime);
-  sprintf(timestr, "%d:%d", timeinfo->tm_hour, timeinfo->tm_min);
+  sprintf(timestr, "%02d:%02d", timeinfo->tm_hour, timeinfo->tm_min);
 
   cJSON_AddStringToObject(body, "message", msg);
   cJSON_AddStringToObject(body, "from", user);
@@ -137,6 +146,63 @@ int set_status(int status) {
   return (1);
 }
 
+void *receive_message() {
+  char inbuff[MAX_BUFF];
+
+  while(1) {
+    if(recv(fd, inbuff, MAX_BUFF, 0) >0) {
+      cJSON *json = cJSON_Parse(inbuff);
+      cJSON *request = NULL;
+      cJSON *response = NULL;
+
+      request = cJSON_GetObjectItemCaseSensitive(json, "request");
+      response = cJSON_GetObjectItemCaseSensitive(json, "response");
+
+      //request
+      if(cJSON_IsString(request) && request->valuestring != NULL) {
+        //message
+        if (strncmp(request->valuestring, "NEW_MESSAGE", 11) == 0) {
+          cJSON *body = NULL;
+          cJSON *from = NULL;
+          cJSON *delivered = NULL;
+          cJSON *msg = NULL;
+          char u_from[NAME_LEN];
+          char inmessage[MESSAGE_LEN];
+          char time_at[10];
+
+          body = cJSON_GetObjectItemCaseSensitive(json, "body");
+          if(cJSON_IsObject(body)) {
+            from = cJSON_GetObjectItemCaseSensitive(body, "from");
+            delivered = cJSON_GetObjectItemCaseSensitive(body, "delivered_at");
+            msg = cJSON_GetObjectItemCaseSensitive(body, "message");
+            if(cJSON_IsString(from) && cJSON_IsString(delivered) && cJSON_IsString(msg)
+                  && from->valuestring != NULL && delivered->valuestring != NULL && msg->valuestring != NULL) {
+              strcpy(inmessage, msg->valuestring);
+              strcpy(u_from, from->valuestring);
+              strcpy(time_at, delivered->valuestring);
+              printf("\33[2K\r");
+              printf("\x1B[32m<%s - %s>\x1B[0m %s\n", u_from, time_at, inmessage);
+              printf("\x1B[32m<chatcli>$\x1B[0m ");
+              fflush(stdout);
+            }
+          }
+        }
+      
+      //response
+      } else if (cJSON_IsString(response) && response->valuestring != NULL) {
+        if (strncmp(response->valuestring, "hola", 4));
+
+      } else {
+        printf("Mensaje del servidor inválido\n");
+      }
+      cJSON_Delete(json);
+    } else {
+      break;
+    }
+    bzero(inbuff, MAX_BUFF);
+  }
+}
+
 int main(int argc, char *argv[]) {
   // Initialization with arguments
   if(argc != 4) {
@@ -159,9 +225,13 @@ int main(int argc, char *argv[]) {
     return (-1);
   }
 
+  pthread_t receive_thread;
+
+  pthread_create(&receive_thread, NULL, &receive_message, NULL);
+
   char inp[MAX_INPUT_SIZE], *token;
   while(1) {
-    printf("<chatsrv>$ ");
+    printf("\x1B[32m<chatcli>$\x1B[0m ");
     fgets(inp, MAX_INPUT_SIZE, stdin);
     char * offset = strstr( inp, "\n" );  if (NULL != offset) *offset = '\0'; //quitar \n del final del string
     token = strtok(inp, " ");
@@ -174,7 +244,6 @@ int main(int argc, char *argv[]) {
       strcpy(dest_user, token);
       token = strtok(NULL, "\0");
       strcpy(message, token);
-      printf("to:%s -- message:%s\n", dest_user, message);
       send_message(dest_user, message);
 
     //status <status>
@@ -200,11 +269,14 @@ int main(int argc, char *argv[]) {
         printf("Error enviando solicitud de desconectar\n");
         return (-1);
       }
+      sleep(1);
       break;
 
     } else {
       printf("Comando desconocido\n");
     }
   }
+
+  close(fd);
   return (0);
 }
