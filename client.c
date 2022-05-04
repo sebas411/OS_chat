@@ -13,16 +13,17 @@
 #include "cjson/cJSON.h"
 #include "cjson/cJSON.c"
 
+#define MAX_BUFF 500
+#define NAME_LEN 20
 #define MAX_INPUT_SIZE 200
 #define MESSAGE_LEN 100
-#define NAME_LEN 20
-#define MAX_BUFF 500
 
 struct sockaddr_in server;
 int fd, conn, port;
 char message[MESSAGE_LEN] = "";
 char user[NAME_LEN];
 char server_ip[20];
+char activecolor[8] = "\x1B[32m";
 
 
 int stablish_connection() {
@@ -182,7 +183,7 @@ void *receive_message() {
               strcpy(time_at, delivered->valuestring);
               printf("\33[2K\r");
               printf("\x1B[32m<%s - %s>\x1B[0m %s\n", u_from, time_at, inmessage);
-              printf("\x1B[32m<chatcli>$\x1B[0m ");
+              printf("%s<chatcli>$\x1B[0m ", activecolor);
               fflush(stdout);
             }
           }
@@ -190,7 +191,29 @@ void *receive_message() {
       
       //response
       } else if (cJSON_IsString(response) && response->valuestring != NULL) {
-        if (strncmp(response->valuestring, "hola", 4));
+        if (strncmp(response->valuestring, "GET_USER", 8) == 0) {
+          cJSON *body = NULL;
+          body = cJSON_GetObjectItemCaseSensitive(json, "body");
+
+          if (cJSON_IsArray(body)) {
+            cJSON *user = NULL;
+            printf("\33[2K\r");
+            printf("Usuarios conectados: ");
+            cJSON_ArrayForEach(user, body) {
+              if(cJSON_IsString(user) && user->valuestring != NULL) {
+                printf("| %s ", user->valuestring);
+              }
+            }
+            printf("|\n");
+            printf("%s<chatcli>$\x1B[0m ", activecolor);
+            fflush(stdout);
+          } else if (cJSON_IsString(body) && body->valuestring != NULL) {
+            printf("\33[2K\r");
+            printf("La direccion ip del usuario es: %s\n", body->valuestring);
+            printf("%s<chatcli>$\x1B[0m ", activecolor);
+            fflush(stdout);
+          }
+        }
 
       } else {
         printf("Mensaje del servidor inválido\n");
@@ -231,7 +254,7 @@ int main(int argc, char *argv[]) {
 
   char inp[MAX_INPUT_SIZE], *token;
   while(1) {
-    printf("\x1B[32m<chatcli>$\x1B[0m ");
+    printf("%s<chatcli>$\x1B[0m ", activecolor);
     fgets(inp, MAX_INPUT_SIZE, stdin);
     char * offset = strstr( inp, "\n" );  if (NULL != offset) *offset = '\0'; //quitar \n del final del string
     token = strtok(inp, " ");
@@ -252,8 +275,19 @@ int main(int argc, char *argv[]) {
       int status = atoi(token);
       set_status(status);
 
+    //getconn
+    } else if (strncmp(token, "getconn", 7) == 0) {
+      get_user("all");
+
+    //getuser <user>
+    } else if (strncmp(token, "getuser", 7) == 0) {
+      char dest_user[NAME_LEN];
+      token = strtok(NULL, "\0");
+      strcpy(dest_user, token);
+      get_user(dest_user);
+
     //getmsg <user>
-    }else if (strcmp(token, "getglobal")==0){
+    } else if (strcmp(token, "getglobal")==0){
       token = strtok(NULL, "");
       char from_user[NAME_LEN];
       strcpy(from_user, token);

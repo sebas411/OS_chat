@@ -13,9 +13,8 @@
 #include "cjson/cJSON.c"
 
 #define MAX_BUFF 500
-#define MESSAGE_LEN 1000
-#define MAX_CONN 5
 #define NAME_LEN 20
+#define MAX_CONN 5
 
 static _Atomic unsigned int num_conns;
 
@@ -28,7 +27,6 @@ struct client_conn {
 
 struct client_conn *conns[MAX_CONN];
 
-char message[MESSAGE_LEN] = "";
 
 pthread_mutex_t client_mutex = PTHREAD_MUTEX_INITIALIZER;
 
@@ -44,7 +42,6 @@ void queue_add(struct client_conn *cl){
 
 	pthread_mutex_unlock(&client_mutex);
 }
-
 
 void queue_remove(char *uid){
 	pthread_mutex_lock(&client_mutex);
@@ -131,6 +128,60 @@ int send_message(char *buff) {
   return(-1);
 }
 
+void put_status(int status, char *user) {
+  for(int i=0; i < MAX_CONN; ++i){
+		if(conns[i]){
+			if(strcmp(conns[i]->user, user) == 0){
+        conns[i]->status = status;
+				break;
+			}
+		}
+	}
+}
+
+void get_users(int fd) {
+  cJSON *json = cJSON_CreateObject();
+  cJSON *users = cJSON_AddArrayToObject(json, "body");
+  char *string;
+  
+  for(int i=0; i < MAX_CONN; ++i){
+		if(conns[i]){
+      cJSON *user = cJSON_CreateString(conns[i]->user);
+			cJSON_AddItemToArray(users, user);
+		}
+	}
+  cJSON_AddStringToObject(json, "response", "GET_USER");
+  cJSON_AddNumberToObject(json, "code", 200);
+  string = cJSON_Print(json);
+  cJSON_Delete(json);
+  send(fd, string, strlen(string), 0);
+}
+
+void get_user(int fd, char *user) {
+  cJSON *json = cJSON_CreateObject();
+  char ipstr[20];
+  char *string;
+
+  for(int i=0; i < MAX_CONN; ++i){
+		if(conns[i]){
+      if(strcmp(conns[i]->user, user) == 0){
+				sprintf(ipstr, "%d.%d.%d.%d",
+        conns[i]->socket.sin_addr.s_addr & 0xff,
+        (conns[i]->socket.sin_addr.s_addr & 0xff00) >> 8,
+        (conns[i]->socket.sin_addr.s_addr & 0xff0000) >> 16,
+        (conns[i]->socket.sin_addr.s_addr & 0xff000000) >> 24);
+				break;
+			}
+		}
+	}
+  cJSON_AddStringToObject(json, "response", "GET_USER");
+  cJSON_AddNumberToObject(json, "code", 200);
+  cJSON_AddStringToObject(json, "body", ipstr);
+  string = cJSON_Print(json);
+  cJSON_Delete(json);
+  send(fd, string, strlen(string), 0);
+}
+
 void * handle_conn(void *arg) {
   char buff[MAX_BUFF];
   char username[NAME_LEN];
@@ -176,7 +227,7 @@ void * handle_conn(void *arg) {
 
     strcpy(client_connection->user, username);
 
-    print_users();
+    //print_users();
 
     printf("El usuario '%s' se ha conectado\n", username);
 
@@ -215,6 +266,28 @@ end1:
       // send message
       } else if (strcmp(request->valuestring, "POST_CHAT") == 0) {
         send_message(buff);
+      } else if (strncmp(request->valuestring, "PUT_STATUS", 10) == 0) {
+        cJSON *status = NULL;
+        status = cJSON_GetObjectItemCaseSensitive(json, "body");
+        if (cJSON_IsNumber(status)) {
+          put_status(status->valueint, client_connection->user);
+          simple_response(client_connection->fd, "PUT_STATUS", 200);
+        }
+      } else if (strncmp(request->valuestring, "GET_USER", 8) == 0) {
+        cJSON *body = NULL;
+        char dest_user[NAME_LEN];
+
+        body = cJSON_GetObjectItemCaseSensitive(json, "body");
+
+        if (cJSON_IsString(body) && body->valuestring != NULL) {
+          if (strncmp(body->valuestring, "all", 3) == 0)
+          get_users(client_connection->fd);
+          else {
+            strcpy(dest_user, body->valuestring);
+            get_user(client_connection->fd, dest_user);
+          }
+        }
+
       }
 
       cJSON_Delete(json);
@@ -230,7 +303,7 @@ end1:
 
   close(client_connection->fd);
   queue_remove(client_connection->user);
-  print_users();
+  //print_users();
   free(client_connection);
   num_conns--;
   pthread_detach(pthread_self());
