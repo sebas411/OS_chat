@@ -57,6 +57,19 @@ void queue_add(struct client_conn *cl){
 	pthread_mutex_unlock(&client_mutex);
 }
 
+void add_message (struct message_s *me){
+	pthread_mutex_lock(&message_mutex);
+
+	for(int i=0; i < MAX_MESSAGES; ++i){
+		if(!messages[i]){
+			messages[i] = me;
+			break;
+		}
+	}
+
+	pthread_mutex_unlock(&message_mutex);
+}
+
 void queue_remove(char *uid){
 	pthread_mutex_lock(&client_mutex);
 
@@ -95,22 +108,40 @@ void simple_response(int fd, char *response, int code) {
 }
 
 int send_message(char *buff) {
+  printf("Received message\n");
   char u_name[NAME_LEN];
   char from_name[NAME_LEN];
+  char deliv[30];
+  char messa[MESSAGE_LEN];
   cJSON *json = cJSON_Parse(buff);
   cJSON *body = NULL;
-  cJSON *to = NULL;
-  cJSON *from = NULL;
 
   body = cJSON_GetObjectItemCaseSensitive(json, "body");
-  if (!cJSON_IsObject(body)) return (-1);
+  if (!cJSON_IsArray(body)) return (-1);
 
-  to = cJSON_GetObjectItemCaseSensitive(body, "to");
-  from = cJSON_GetObjectItemCaseSensitive(body, "from");
+  cJSON *to;
+  cJSON *from;
+  cJSON *delivered;
+  cJSON *mess;
+
+  to = cJSON_GetArrayItem(body, 3);
+  from = cJSON_GetArrayItem(body, 1);
+  delivered = cJSON_GetArrayItem(body, 1);
+  mess = cJSON_GetArrayItem(body, 1);
 
   if(!cJSON_IsString(to) || to->valuestring == NULL || !cJSON_IsString(from) || from->valuestring == NULL) return (-1);
   strcpy(u_name, to->valuestring);
   strcpy(from_name, from->valuestring);
+  strcpy(deliv, delivered->valuestring);
+  strcpy(messa, mess->valuestring);
+
+  struct message_s *mess_stru;
+  strcpy(mess_stru->to, u_name);
+  strcpy(mess_stru->from, from_name);
+  strcpy(mess_stru->time, deliv);
+  strcpy(mess_stru->message, messa);
+
+  add_message(mess_stru);
 
   
   cJSON *newjson = cJSON_CreateObject();
@@ -151,6 +182,35 @@ void put_status(int status, char *user) {
 			}
 		}
 	}
+}
+
+void get_message(int fd, char *from, char *to) {
+  int send_all = 0;
+  if (strncmp(from, "all", 3) == 0) send_all = 1;
+  cJSON *json = cJSON_CreateObject();
+  cJSON *body;
+  cJSON_AddStringToObject(json, "response", "GET_CHAT");
+  cJSON_AddNumberToObject(json, "code", 200);
+
+  body = cJSON_AddArrayToObject(json, "body");
+
+  for (int i=0; i<MAX_MESSAGES;i++) {
+    if(!messages[i]) break;
+    if (strcmp(messages[i]->to, to) == 0 && (send_all || strcmp(messages[i]->from, from) == 0)) {
+      cJSON *subarray = cJSON_CreateArray();
+      cJSON *from_s = cJSON_CreateString(messages[i]->from);
+      cJSON *delivered = cJSON_CreateString(messages[i]->time);
+      cJSON *mess = cJSON_CreateString(messages[i]->message);
+      cJSON_AddItemToArray(subarray, mess);
+      cJSON_AddItemToArray(subarray, from_s);
+      cJSON_AddItemToArray(subarray, delivered);
+
+      cJSON_AddItemToArray(body, subarray);
+    }
+  }
+  char *string = cJSON_Print(json);
+  cJSON_Delete(json);
+  send(fd, string, strlen(string), 0);
 }
 
 void get_users(int fd) {
@@ -215,9 +275,9 @@ void * handle_conn(void *arg) {
 
     if (!cJSON_IsString(request) || request->valuestring == NULL
               || strncmp(request->valuestring, "INIT_CONEX", 10) != 0
-              || !cJSON_IsObject(body)) goto end1;
+              || !cJSON_IsArray(body)) goto end1;
     
-    u_name = cJSON_GetObjectItemCaseSensitive(body, "user_id");
+    u_name = cJSON_GetArrayItem(body, 1);
 
     if (!cJSON_IsString(u_name) || u_name->valuestring == NULL) goto end1;
 
@@ -303,6 +363,14 @@ end1:
           }
         }
 
+      } else if (strncmp(request->valuestring, "GET_CHAT", 8) == 0) {
+        cJSON *body = NULL;
+        char dest_user[NAME_LEN];
+        char from_user[NAME_LEN];
+        body = cJSON_GetObjectItemCaseSensitive(json, "body");
+        strcpy(from_user, body->valuestring);
+        strcpy(dest_user, client_connection->user);
+        get_message(client_connection->fd, from_user, dest_user);
       }
 
       cJSON_Delete(json);

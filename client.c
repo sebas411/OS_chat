@@ -39,7 +39,9 @@ int stablish_connection() {
   if(connect(fd, (struct sockaddr*) &server, sizeof(server)) < 0) return (-1);
 
   cJSON *json = cJSON_CreateObject();
-  cJSON *body = cJSON_CreateObject();
+  cJSON *body = cJSON_AddArrayToObject(json, "body");
+  cJSON *time_s;
+  cJSON *user_s;
 
   time_t rawtime;
   struct tm *timeinfo;
@@ -48,12 +50,12 @@ int stablish_connection() {
   time(&rawtime);
   timeinfo = localtime(&rawtime);
   sprintf(timestr, "%02d:%02d", timeinfo->tm_hour, timeinfo->tm_min);
-
-  cJSON_AddStringToObject(body, "connect_time", timestr);
-  cJSON_AddStringToObject(body, "user_id", user);
+  time_s = cJSON_CreateString(timestr);
+  user_s = cJSON_CreateString(user);
+  cJSON_AddItemToArray(body, time_s);
+  cJSON_AddItemToArray(body, user_s);
 
   cJSON_AddStringToObject(json, "request", "INIT_CONEX");
-  cJSON_AddItemToObject(json, "body", body);
 
   char *string = cJSON_Print(json);
 
@@ -83,7 +85,7 @@ int send_disconnect() {
 
 int send_message(char *dest, char *msg) {
   cJSON *json = cJSON_CreateObject();
-  cJSON *body = cJSON_CreateObject();
+  cJSON *body = cJSON_AddArrayToObject(json, "body");
 
   time_t rawtime;
   struct tm *timeinfo;
@@ -92,14 +94,19 @@ int send_message(char *dest, char *msg) {
   time(&rawtime);
   timeinfo = localtime(&rawtime);
   sprintf(timestr, "%02d:%02d", timeinfo->tm_hour, timeinfo->tm_min);
+  
+  cJSON *msg_s = cJSON_CreateString(msg);
+  cJSON *dest_s = cJSON_CreateString(dest);
+  cJSON *time_s = cJSON_CreateString(timestr);
+  cJSON *from_s = cJSON_CreateString(user);
 
-  cJSON_AddStringToObject(body, "message", msg);
-  cJSON_AddStringToObject(body, "from", user);
-  cJSON_AddStringToObject(body, "delivered_at", timestr);
-  cJSON_AddStringToObject(body, "to", dest);
+
+  cJSON_AddItemToArray(body, msg_s);
+  cJSON_AddItemToArray(body, from_s);
+  cJSON_AddItemToArray(body, time_s);
+  cJSON_AddItemToArray(body, dest_s);
 
   cJSON_AddStringToObject(json, "request", "POST_CHAT");
-  cJSON_AddItemToObject(json, "body", body);
 
   char *string = cJSON_Print(json);
 
@@ -165,21 +172,21 @@ void *receive_message() {
         //message
         if (strncmp(request->valuestring, "NEW_MESSAGE", 11) == 0) {
           cJSON *body = NULL;
-          cJSON *from = NULL;
-          cJSON *to = NULL;
-          cJSON *delivered = NULL;
-          cJSON *msg = NULL;
+          cJSON *from;
+          cJSON *to;
+          cJSON *delivered;
+          cJSON *msg;
           char u_from[NAME_LEN];
           char u_to[NAME_LEN];
           char inmessage[MESSAGE_LEN];
           char time_at[10];
 
           body = cJSON_GetObjectItemCaseSensitive(json, "body");
-          if(cJSON_IsObject(body)) {
-            from = cJSON_GetObjectItemCaseSensitive(body, "from");
-            delivered = cJSON_GetObjectItemCaseSensitive(body, "delivered_at");
-            msg = cJSON_GetObjectItemCaseSensitive(body, "message");
-            to = cJSON_GetObjectItemCaseSensitive(body, "to");
+          if(cJSON_IsArray(body)) {
+            from = cJSON_GetArrayItem(body, 1);
+            delivered = cJSON_GetArrayItem(body, 2);
+            msg = cJSON_GetArrayItem(body, 0);
+            to = cJSON_GetArrayItem(body, 3);
             if(cJSON_IsString(from) && cJSON_IsString(delivered) && cJSON_IsString(msg) && cJSON_IsString(to)
                   && from->valuestring != NULL && delivered->valuestring != NULL && msg->valuestring != NULL && to->valuestring != NULL) {
               strcpy(inmessage, msg->valuestring);
