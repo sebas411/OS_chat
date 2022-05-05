@@ -14,9 +14,13 @@
 
 #define MAX_BUFF 500
 #define NAME_LEN 20
-#define MAX_CONN 5
+#define MAX_CONN 30
+#define MAX_MESSAGES 100
+#define MESSAGE_LEN 100
+
 
 static _Atomic unsigned int num_conns;
+static _Atomic unsigned int current_mess;
 
 struct client_conn {
   struct sockaddr_in socket;
@@ -25,9 +29,19 @@ struct client_conn {
   int fd;
 };
 
+struct message_s {
+  char message[MESSAGE_LEN];
+  char time[20];
+  char from[NAME_LEN];
+  char to[NAME_LEN];
+};
+
 struct client_conn *conns[MAX_CONN];
 
+struct message_s *messages[MAX_MESSAGES];
 
+
+pthread_mutex_t message_mutex = PTHREAD_MUTEX_INITIALIZER;
 pthread_mutex_t client_mutex = PTHREAD_MUTEX_INITIALIZER;
 
 void queue_add(struct client_conn *cl){
@@ -174,6 +188,7 @@ void get_user(int fd, char *user) {
 			}
 		}
 	}
+
   cJSON_AddStringToObject(json, "response", "GET_USER");
   cJSON_AddNumberToObject(json, "code", 200);
   cJSON_AddStringToObject(json, "body", ipstr);

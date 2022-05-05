@@ -23,6 +23,7 @@ int fd, conn, port;
 char message[MESSAGE_LEN] = "";
 char user[NAME_LEN];
 char server_ip[20];
+int tmpstatus = 0;
 char activecolor[8] = "\x1B[32m";
 
 
@@ -165,9 +166,11 @@ void *receive_message() {
         if (strncmp(request->valuestring, "NEW_MESSAGE", 11) == 0) {
           cJSON *body = NULL;
           cJSON *from = NULL;
+          cJSON *to = NULL;
           cJSON *delivered = NULL;
           cJSON *msg = NULL;
           char u_from[NAME_LEN];
+          char u_to[NAME_LEN];
           char inmessage[MESSAGE_LEN];
           char time_at[10];
 
@@ -176,13 +179,20 @@ void *receive_message() {
             from = cJSON_GetObjectItemCaseSensitive(body, "from");
             delivered = cJSON_GetObjectItemCaseSensitive(body, "delivered_at");
             msg = cJSON_GetObjectItemCaseSensitive(body, "message");
-            if(cJSON_IsString(from) && cJSON_IsString(delivered) && cJSON_IsString(msg)
-                  && from->valuestring != NULL && delivered->valuestring != NULL && msg->valuestring != NULL) {
+            to = cJSON_GetObjectItemCaseSensitive(body, "to");
+            if(cJSON_IsString(from) && cJSON_IsString(delivered) && cJSON_IsString(msg) && cJSON_IsString(to)
+                  && from->valuestring != NULL && delivered->valuestring != NULL && msg->valuestring != NULL && to->valuestring != NULL) {
               strcpy(inmessage, msg->valuestring);
               strcpy(u_from, from->valuestring);
               strcpy(time_at, delivered->valuestring);
+              strcpy(u_to, to->valuestring);
+              if (strncmp(u_to, "all", 3) == 0) {
+                strcpy(u_to, " (global)");
+              } else {
+                strcpy(u_to, "");
+              }
               printf("\33[2K\r");
-              printf("\x1B[32m<%s - %s>\x1B[0m %s\n", u_from, time_at, inmessage);
+              printf("\x1B[32m<%s - %s%s>\x1B[0m %s\n", u_from, time_at, u_to, inmessage);
               printf("%s<chatcli>$\x1B[0m ", activecolor);
               fflush(stdout);
             }
@@ -213,7 +223,23 @@ void *receive_message() {
             printf("%s<chatcli>$\x1B[0m ", activecolor);
             fflush(stdout);
           }
+        } else if (strncmp(response->valuestring, "PUT_STATUS", 10) == 0) {
+          cJSON *code = NULL;
+          code = cJSON_GetObjectItemCaseSensitive(json, "code");
+          if (cJSON_IsNumber(code) && code->valueint == 200) {
+            if (tmpstatus == 0) {
+              strcpy(activecolor, "\x1B[32m");
+            } else if (tmpstatus == 1) {
+              strcpy(activecolor, "\x1B[33m");
+            } else if (tmpstatus == 2) {
+              strcpy(activecolor, "\x1B[31m");
+            }
+            printf("\33[2K\r");
+            printf("%s<chatcli>$\x1B[0m ", activecolor);
+            fflush(stdout);
+          }
         }
+
 
       } else {
         printf("Mensaje del servidor inválido\n");
@@ -273,6 +299,7 @@ int main(int argc, char *argv[]) {
     } else if (strcmp(token, "status")==0) {
       token = strtok(NULL, "\0");
       int status = atoi(token);
+      tmpstatus = status;
       set_status(status);
 
     //getconn
@@ -296,6 +323,10 @@ int main(int argc, char *argv[]) {
     //getglobalmsg
     }else if (strcmp(token, "getglobalmsg")==0){
       get_message("all");
+
+    //help
+    }else if (strncmp(token, "help", 4)==0){
+      printf("Comandos disponibles:\n- help: muestra este mensaje de ayuda\n- message <usuario> <mensaje>: envía un mensaje a un usuario\n- message all <mensaje>: envía un mensaje a todos los usuarios\n- getconn: muestra una lista de usuarios conectados\n- getuser <usuario>: muestra la dirección ip de un usuario\n- status <status>: cambia el status del usuario\n- exit: sale del programa\n");
 
     //exit
     } else if (strcmp(token, "exit")==0) {
