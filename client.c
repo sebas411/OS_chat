@@ -26,6 +26,8 @@ char server_ip[20];
 int tmpstatus = 0;
 char activecolor[8] = "\x1B[32m";
 
+int got_disconnected = 0;
+
 
 int stablish_connection() {
   fd = socket(AF_INET, SOCK_STREAM, 0);
@@ -210,7 +212,16 @@ void *receive_message() {
       } else if (cJSON_IsString(response) && response->valuestring != NULL) {
         if (strncmp(response->valuestring, "GET_USER", 8) == 0) {
           cJSON *body = NULL;
+          cJSON *code = NULL;
           body = cJSON_GetObjectItemCaseSensitive(json, "body");
+          code = cJSON_GetObjectItemCaseSensitive(json, "code");
+          if(!cJSON_IsNumber(code) || code->valueint != 200) {
+            printf("\33[2K\r");
+            printf("No se pudo obtener información de usuario\n");
+            printf("%s<chatcli>$\x1B[0m ", activecolor);
+            fflush(stdout);
+            goto cont;
+          }
 
           if (cJSON_IsArray(body)) {
             cJSON *user = NULL;
@@ -244,6 +255,23 @@ void *receive_message() {
             printf("\33[2K\r");
             printf("%s<chatcli>$\x1B[0m ", activecolor);
             fflush(stdout);
+          } else {
+            printf("\33[2K\r");
+            printf("El estado no se pudo actualizar\n");
+            printf("%s<chatcli>$\x1B[0m ", activecolor);
+            fflush(stdout);
+          }
+        } else if (strncmp(response->valuestring, "GET_CHAT", 8) == 0) {
+          char *string = cJSON_Print(json);
+          printf("%s", string);
+        } else if (strcmp(response->valuestring, "POST_CHAT") == 0) {
+          cJSON *code = NULL;
+          code = cJSON_GetObjectItemCaseSensitive(json, "code");
+          if (!cJSON_IsNumber(code) || code->valueint != 200) {
+            printf("\33[2K\r");
+            printf("No se pudo enviar el mensaje\n");
+            printf("%s<chatcli>$\x1B[0m ", activecolor);
+            fflush(stdout);
           }
         }
 
@@ -251,12 +279,15 @@ void *receive_message() {
       } else {
         printf("Mensaje del servidor inválido\n");
       }
+cont:
       cJSON_Delete(json);
     } else {
       break;
     }
     bzero(inbuff, MAX_BUFF);
   }
+  printf("Se ha desconectado del servidor\n");
+  got_disconnected = 1;
 }
 
 int main(int argc, char *argv[]) {
@@ -286,7 +317,7 @@ int main(int argc, char *argv[]) {
   pthread_create(&receive_thread, NULL, &receive_message, NULL);
 
   char inp[MAX_INPUT_SIZE], *token;
-  while(1) {
+  while(!got_disconnected) {
     printf("%s<chatcli>$\x1B[0m ", activecolor);
     fgets(inp, MAX_INPUT_SIZE, stdin);
     char * offset = strstr( inp, "\n" );  if (NULL != offset) *offset = '\0'; //quitar \n del final del string
@@ -310,18 +341,18 @@ int main(int argc, char *argv[]) {
       set_status(status);
 
     //getconn
-    } else if (strncmp(token, "getconn", 7) == 0) {
+    } else if (strcmp(token, "getconn") == 0) {
       get_user("all");
 
     //getuser <user>
-    } else if (strncmp(token, "getuser", 7) == 0) {
+    } else if (strcmp(token, "getuser") == 0) {
       char dest_user[NAME_LEN];
       token = strtok(NULL, "\0");
       strcpy(dest_user, token);
       get_user(dest_user);
 
     //getmsg <user>
-    } else if (strcmp(token, "getglobal")==0){
+    } else if (strcmp(token, "getmsg")==0){
       token = strtok(NULL, "");
       char from_user[NAME_LEN];
       strcpy(from_user, token);

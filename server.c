@@ -31,7 +31,7 @@ struct client_conn {
 
 struct message_s {
   char message[MESSAGE_LEN];
-  char time[20];
+  char time_s[20];
   char from[NAME_LEN];
   char to[NAME_LEN];
 };
@@ -108,7 +108,6 @@ void simple_response(int fd, char *response, int code) {
 }
 
 int send_message(char *buff) {
-  printf("Received message\n");
   char u_name[NAME_LEN];
   char from_name[NAME_LEN];
   char deliv[30];
@@ -126,8 +125,8 @@ int send_message(char *buff) {
 
   to = cJSON_GetArrayItem(body, 3);
   from = cJSON_GetArrayItem(body, 1);
-  delivered = cJSON_GetArrayItem(body, 1);
-  mess = cJSON_GetArrayItem(body, 1);
+  delivered = cJSON_GetArrayItem(body, 2);
+  mess = cJSON_GetArrayItem(body, 0);
 
   if(!cJSON_IsString(to) || to->valuestring == NULL || !cJSON_IsString(from) || from->valuestring == NULL) return (-1);
   strcpy(u_name, to->valuestring);
@@ -135,10 +134,10 @@ int send_message(char *buff) {
   strcpy(deliv, delivered->valuestring);
   strcpy(messa, mess->valuestring);
 
-  struct message_s *mess_stru;
+  struct message_s *mess_stru = (struct message_s *)malloc(sizeof(struct message_s));;
   strcpy(mess_stru->to, u_name);
   strcpy(mess_stru->from, from_name);
-  strcpy(mess_stru->time, deliv);
+  strcpy(mess_stru->time_s, deliv);
   strcpy(mess_stru->message, messa);
 
   add_message(mess_stru);
@@ -169,11 +168,12 @@ int send_message(char *buff) {
 			}
 		}
 	}
-  if (sendsucc == 1) return(1);
-  return(-1);
+  if (sendsucc) return(200);
+  return(102);
 }
 
-void put_status(int status, char *user) {
+int put_status(int status, char *user) {
+  if (!(status == 0 || status == 1 || status == 2)) return(104);
   for(int i=0; i < MAX_CONN; ++i){
 		if(conns[i]){
 			if(strcmp(conns[i]->user, user) == 0){
@@ -182,25 +182,42 @@ void put_status(int status, char *user) {
 			}
 		}
 	}
+  return (200);
 }
 
 void get_message(int fd, char *from, char *to) {
+  int accepted = 0;
+  int found = 0;
   int send_all = 0;
   if (strncmp(from, "all", 3) == 0) send_all = 1;
   cJSON *json = cJSON_CreateObject();
   cJSON *body;
   cJSON_AddStringToObject(json, "response", "GET_CHAT");
-  cJSON_AddNumberToObject(json, "code", 200);
 
   body = cJSON_AddArrayToObject(json, "body");
 
   for (int i=0; i<MAX_MESSAGES;i++) {
-    if(!messages[i]) break;
-    if (strcmp(messages[i]->to, to) == 0 && (send_all || strcmp(messages[i]->from, from) == 0)) {
+    accepted = 0;
+    if(!messages[i]) continue;
+    if (send_all && strncmp(messages[i]->to, "all", 3) == 0) accepted = 1;
+    else if (!send_all && strcmp(messages[i]->to, to) == 0 && strcmp(messages[i]->from, from) == 0) {
+      accepted = 1;
+    } else if (!send_all && strcmp(messages[i]->to, from) == 0 && strcmp(messages[i]->from, to) == 0) {
+      accepted = 1;
+    }
+    if (accepted) {
       cJSON *subarray = cJSON_CreateArray();
-      cJSON *from_s = cJSON_CreateString(messages[i]->from);
-      cJSON *delivered = cJSON_CreateString(messages[i]->time);
-      cJSON *mess = cJSON_CreateString(messages[i]->message);
+      char from[NAME_LEN];
+      char timestr[NAME_LEN];
+      char messagestr[MESSAGE_LEN];
+      strcpy(from, messages[i]->from);
+      strcpy(timestr, messages[i]->time_s);
+      strcpy(messagestr, messages[i]->message);
+      found = 1;
+
+      cJSON *from_s = cJSON_CreateString(from);
+      cJSON *delivered = cJSON_CreateString(timestr);
+      cJSON *mess = cJSON_CreateString(messagestr);
       cJSON_AddItemToArray(subarray, mess);
       cJSON_AddItemToArray(subarray, from_s);
       cJSON_AddItemToArray(subarray, delivered);
@@ -208,6 +225,12 @@ void get_message(int fd, char *from, char *to) {
       cJSON_AddItemToArray(body, subarray);
     }
   }
+  int code;
+  if (found)
+    code = 200;
+  else
+    code = 102;
+  cJSON_AddNumberToObject(json, "code", code);
   char *string = cJSON_Print(json);
   cJSON_Delete(json);
   send(fd, string, strlen(string), 0);
@@ -216,16 +239,20 @@ void get_message(int fd, char *from, char *to) {
 void get_users(int fd) {
   cJSON *json = cJSON_CreateObject();
   cJSON *users = cJSON_AddArrayToObject(json, "body");
+  int found = 0;
+  int code = 200;
   char *string;
   
   for(int i=0; i < MAX_CONN; ++i){
 		if(conns[i]){
+      found = 1;
       cJSON *user = cJSON_CreateString(conns[i]->user);
 			cJSON_AddItemToArray(users, user);
 		}
 	}
+  if (!found) code = 103;
   cJSON_AddStringToObject(json, "response", "GET_USER");
-  cJSON_AddNumberToObject(json, "code", 200);
+  cJSON_AddNumberToObject(json, "code", code);
   string = cJSON_Print(json);
   cJSON_Delete(json);
   send(fd, string, strlen(string), 0);
@@ -235,22 +262,26 @@ void get_user(int fd, char *user) {
   cJSON *json = cJSON_CreateObject();
   char ipstr[20];
   char *string;
+  int found = 0;
+  int code = 200;
 
   for(int i=0; i < MAX_CONN; ++i){
 		if(conns[i]){
       if(strcmp(conns[i]->user, user) == 0){
+        found = 1;
 				sprintf(ipstr, "%d.%d.%d.%d",
-        conns[i]->socket.sin_addr.s_addr & 0xff,
-        (conns[i]->socket.sin_addr.s_addr & 0xff00) >> 8,
-        (conns[i]->socket.sin_addr.s_addr & 0xff0000) >> 16,
-        (conns[i]->socket.sin_addr.s_addr & 0xff000000) >> 24);
+          conns[i]->socket.sin_addr.s_addr & 0xff,
+          (conns[i]->socket.sin_addr.s_addr & 0xff00) >> 8,
+          (conns[i]->socket.sin_addr.s_addr & 0xff0000) >> 16,
+          (conns[i]->socket.sin_addr.s_addr & 0xff000000) >> 24);
 				break;
 			}
 		}
 	}
+  if (!found) code = 102;
 
   cJSON_AddStringToObject(json, "response", "GET_USER");
-  cJSON_AddNumberToObject(json, "code", 200);
+  cJSON_AddNumberToObject(json, "code", code);
   cJSON_AddStringToObject(json, "body", ipstr);
   string = cJSON_Print(json);
   cJSON_Delete(json);
@@ -340,13 +371,14 @@ end1:
 
       // send message
       } else if (strcmp(request->valuestring, "POST_CHAT") == 0) {
-        send_message(buff);
+        int code = send_message(buff);
+        simple_response(client_connection->fd, "POST_CHAT", code);
       } else if (strncmp(request->valuestring, "PUT_STATUS", 10) == 0) {
         cJSON *status = NULL;
         status = cJSON_GetObjectItemCaseSensitive(json, "body");
         if (cJSON_IsNumber(status)) {
-          put_status(status->valueint, client_connection->user);
-          simple_response(client_connection->fd, "PUT_STATUS", 200);
+          int code = put_status(status->valueint, client_connection->user);
+          simple_response(client_connection->fd, "PUT_STATUS", code);
         }
       } else if (strncmp(request->valuestring, "GET_USER", 8) == 0) {
         cJSON *body = NULL;
@@ -356,7 +388,7 @@ end1:
 
         if (cJSON_IsString(body) && body->valuestring != NULL) {
           if (strncmp(body->valuestring, "all", 3) == 0)
-          get_users(client_connection->fd);
+            get_users(client_connection->fd);
           else {
             strcpy(dest_user, body->valuestring);
             get_user(client_connection->fd, dest_user);
